@@ -48,8 +48,9 @@ rearchiver -h
 ```
 
 ## TODO:
-- [] Add support for WavPack as an alternative codec / codec supporting 32 bit float WAV files
-- [] Migrate to a proper pool for managing concurrent process execution
+- [ ] Add support for WavPack as an alternative codec / codec supporting 32 bit float WAV files
+- [ ] Migrate to a proper pool for managing concurrent process execution
+- [ ] Consider if there are any practical benefits in properly parsing the project file, instead of doing it by dumb text substitution
 
 ## Contributing
 The project is open for contributions. Please, try to limit the scope of your changes.

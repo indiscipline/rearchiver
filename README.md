@@ -4,8 +4,10 @@
 Rearchiver prepares your [Reaper](https://reaper.fm) project for archiving:
 
 - Scans the project file for all used WAV files
-- Converts WAV to FLAC and changes the links in the input RPP file accordingly
-- Optionally deletes converted source files
+- Finds them in the project directory and converts to FLAC
+- Changes the links to the successfully converted source files input RPP file accordingly
+- Optionally deletes processed source files and their `.reapeaks`
+- Outputs the corrected project file
 
 Only WAV files supported by the `flac` binary can be converted. Currently, this means 32 bit floating point PCM files will be skipped and left uncompressed!
 

@@ -1,5 +1,4 @@
-import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs]
-import fusion/btreetables
+import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs, critbits]
 import pkg/[argparse]
 import threading/channels
 import ../cozytaskpool/src/cozytaskpool
@@ -11,13 +10,15 @@ from std/os import splitFile, joinPath, getCurrentDir
 const
   ## Autodefined by Nimble. If built using pure nim, use git tag
   NimblePkgVersion {.strdefine.} = staticExec("git describe --tags HEAD").strip()
-  HelpStr = """Convert WAV files used in a Reaper project to FLAC for archiing.
-  A working FLAC binary by xiph.org accessible by your environment is required.
-  Outputs the edited RPP file to stdout, or writes to a file path given (`-o`).
-  Prints a tab-separated list of file pairs to convert unless `-y` is used.
-  Logs to STDERR.
+  HelpStr = "Rearchiver " & NimblePkgVersion & """
 
-  No guarantees."""
+Convert WAV files used in a Reaper project to FLAC for archiving.
+
+Outputs the edited RPP file to stdout, or writes to a filepath given (`-o`).
+Prints a tab-separated list of file pairs to convert, unless `-y` is used.
+A WAV file needs to reside inside the project directory to be converted.
+A working FLAC binary by xiph.org accessible by your environment is required.
+Logs to STDERR. No guarantees."""
   SourceMarker = "<SOURCE WAVE"
   FileMarker = "FILE \""
   NewExt = ".flac"
@@ -31,7 +32,7 @@ type
     name: string # Value of FILE
   Associative[T, U] = concept t, var u
     t[T] is U
-    u.del(T)
+    u.excl(T)
     t.pairs is (T, U)
 
 func isAbsolute(path: string): bool =
@@ -93,8 +94,8 @@ proc convCandidate(fPath: string): Option[string] =
 
 proc doClean(wavPath: string) =
   proc rm(path: string) =
-    if tryRemoveFile(path): warn(&"• {path} removed")
-    else: err(&"○ {path} error removing")
+    if tryRemoveFile(path): warn(&"{path} removed")
+    else: err(&"{path} error removing")
   let reapeaksPath = wavPath & ".reapeaks"
   if fileExists(wavPath): rm(wavPath)
   if fileExists(reapeaksPath): rm(reapeaksPath)
@@ -149,20 +150,24 @@ proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
     pool.sendTask(toTask( conversion(pool.resultsAddr(), inP, outP, idx) ))
 
   pool.stopPool()
-  for idx in failedIdxs: table.del(keys[idx]) # Cull failed
+  for idx in failedIdxs: table.excl(keys[idx]) # Cull failed
 
 proc main(input: string; output: string = ""; overwrite: bool = false;
   cleanup: bool = false; confirm: bool = true) =
   let project = readFile(input)
   let outputAbs = absolutePath(output)
   var prChunks: seq[ChunkRec]
-  var toConvert: btreetables.Table[string, string]
+  var toConvert: CritBitTree[string]
   setCurrentDir(input.splitPath()[0].absolutePath())
 
   for ch in project.findWaves():
     prChunks.add(ch)
     let pOp = convCandidate(ch.name)
     if pOp.isSome(): toConvert[ch.name] = pOp.get()
+
+  if toConvert.len == 0:
+    info("No WAV files to compress found in the project, exiting.")
+    quit(0)
 
   if confirm:
     for inP, outP in toConvert.pairs():

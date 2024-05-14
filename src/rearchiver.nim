@@ -33,7 +33,17 @@ type
   Associative[T, U] = concept t, var u
     t[T] is U
     u.excl(T)
+    u.hasKey(T) is bool
     t.pairs is (T, U)
+  CodecStr = tuple[bin, ext: string]
+  Codec = enum cFlac, cWavpack
+
+const
+  CodecStrs: array[Codec, CodecStr] = [
+      (bin: "flac", ext: ".flac"),
+      (bin: "wavpack", ext: ".wv"),
+    ]
+
 
 func isAbsolute(path: string): bool =
   ## Force windows paths to be considered absolute on linux
@@ -109,12 +119,21 @@ proc print(file: File; project: openArray[char]; ch: ChunkRec;
     discard file.writeChars(project[ch.mid], 0, ch.mid.len)
     file.write(if name != "": name else: ch.name)
 
-proc flacIsAvailable(): bool =
-  const Cmd = "flac --version"
-  let (output, exitCode) = execCmdEx(Cmd, {poStdErrToStdOut, poUsePath})
-  exitCode == 0 and output.len > 4 and
-  # check if output starts with `flac`
-  (for i in 0..3: (if output[i] != Cmd[i]: return false); true)
+proc codecIsAvailable(codec: Codec): Option[string] =
+  ## Check if invoking a binary with the `--version` parameter successfully
+  ## prints a string starting with codec's binary name.
+  ## True for `flac` and `wavpack`.
+  let (output, exitCode) = try:
+      execCmdEx(CodecStrs[codec].bin & " --version", {poStdErrToStdOut, poUsePath})
+    except CatchableError:
+      return none(string)
+  if exitCode == 0 and output.startsWith(CodecStrs[codec].bin):
+    var firstLine: string = newStringOfCap(14)
+    for line in output.splitLines(): # return only the first line
+      firstLine = line; break
+    some(firstLine)
+  else:
+    none(string)
 
 proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
   # Tried to minimize juggling string pairs aroud:
@@ -174,7 +193,8 @@ proc main(input: string; output: string = ""; overwrite: bool = false;
       info(inP, "\t", outP)
 
   # Delayed so it's possible to get a conversion list in any case
-  if not flacIsAvailable(): panic("Aborted: flac binary is not available!")
+  if not codecIsAvailable(cFlac).isSome():
+    panic("Aborted: flac binary is not available!")
 
   if confirm:
     stderr.writeLine("Continue? [Y/Enter]: ")
@@ -185,7 +205,7 @@ proc main(input: string; output: string = ""; overwrite: bool = false;
   convertAndCullFailed(toConvert)
 
   for ch in prChunks:
-    if toConvert.hasKey(ch.name): # BTreeTables don't have single-lookup-get :(
+    if toConvert.hasKey(ch.name): # Most Nim containers don't have single-lookup-get :(
       let outP = toConvert[ch.name]
       outF.print(project, ch, FLAC, outP)
     else:
@@ -193,20 +213,28 @@ proc main(input: string; output: string = ""; overwrite: bool = false;
 
   if cleanUp: (for inP in toConvert.keys(): doClean(inP))
 
+proc healthCheck() =
+  for codec in Codec.low..Codec.high:
+    let output = codecIsAvailable(codec)
+    if output.isSome():
+      log(output.unsafeGet())
+    else:
+      warn(CodecStrs[codec].bin, " not available!")
 
 when isMainModule:
-  exitprocs.addExitProc((proc() = resetAttributes(stderr)))
+  exitprocs.addExitProc((proc() = resetAttributes(stderr))) # TODO: necessary still?
   var p = newParser:
     help(HelpStr)
     flag("-f", "--overwrite", help="Overwrite output RPP file if exists")
     flag("-x", "--cleanup", help="Remove converted source WAV files")
     flag("-y", "--noconfirm", help="Don't print conversion list and wait for confirmation")
+    flag("-c", "--healthcheck", help="Check available codec binaries and exit", shortcircuit = true)
     flag("-v", "--version", help="Print version and exit", shortcircuit = true)
     option("-o", "--output", help="Output RPP name")
     arg("INPUT_rpp", nargs = 1, help = "Path to input Reaper project")
-  newCozyLogWriter(stderr)
   try:
     let opts = p.parse(commandLineParams())
+    newCozyLogWriter(stderr)
     if fileExists(opts.INPUT_rpp):
       main(opts.INPUT_rpp, opts.output, opts.overwrite, opts.cleanup,
         confirm = (not opts.noconfirm) and stdin.isatty)
@@ -214,6 +242,9 @@ when isMainModule:
       panic("Input file does not exist or is not accessible!")
   except ShortCircuit as err:
     if err.flag == "argparse_help": echo p.help
-    if err.flag == "version": echo fmt"rearchiver {NimblePkgVersion}"
+    elif err.flag == "version": echo fmt"rearchiver {NimblePkgVersion}"
+    elif err.flag == "healthcheck":
+      newCozyLogWriter(stdout)
+      healthCheck()
   except UsageError:
     panic(getCurrentExceptionMsg())

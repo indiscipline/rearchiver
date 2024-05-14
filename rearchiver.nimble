@@ -1,6 +1,6 @@
 from std/strformat import `&`
 
-version       = "0.1.0"
+version       = "0.1.1"
 author        = "Kirill I"
 description   = "Prepare your Reaper project for archiving, converting WAV to FLAC and changing the RPP file accordingly"
 license       = "GPL-3.0-or-later"

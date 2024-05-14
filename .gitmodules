@@ -1,0 +1,3 @@
+[submodule "cozytaskpool"]
+	path = cozytaskpool
+	url = https://github.com/indiscipline/cozytaskpool

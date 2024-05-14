@@ -1,3 +1,6 @@
 [submodule "cozytaskpool"]
 	path = cozytaskpool
 	url = https://github.com/indiscipline/cozytaskpool
+[submodule "cozylogwriter"]
+	path = cozylogwriter
+	url = https://github.com/indiscipline/cozylogwriter

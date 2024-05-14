@@ -3,6 +3,7 @@ import fusion/btreetables
 import pkg/[argparse]
 import threading/channels
 import ../cozytaskpool/src/cozytaskpool
+import ../cozylogwriter/cozylogwriter
 from std/os import splitFile, joinPath, getCurrentDir
 
 #{.experimental: "views".}
@@ -33,11 +34,6 @@ type
     u.del(T)
     t.pairs is (T, U)
 
-template die(m: varargs[string, `$`]) = stderr.styledWriteLine(styleBright, fgRed, m); quit(1)
-template log(m: varargs[string, `$`]) = stderr.styledWriteLine(fgGreen, m, "\t✔")
-template err(m: varargs[string, `$`]) = stderr.styledWriteLine(fgRed, m, "\t✕")
-template warn(m: varargs[string, `$`]) = stderr.styledWriteLine(fgYellow, m, "\t⚠")
-
 func isAbsolute(path: string): bool =
   ## Force windows paths to be considered absolute on linux
   (path.len > 1 and path[0] in {'a'..'z', 'A'..'Z'} and path[1] == ':') or
@@ -48,7 +44,7 @@ iterator findWaves(src: string): ChunkRec =
   ## `pre`: indexes from start of text chunk up to "WAVE",
   ## `mid`: from right after WAVE up to file quote,
   ## `name`: text inside the quotes.
-  let skt = block: (var skt: SkipTable; skt.initSkipTable(SourceMarker); skt)
+  let skt: SkipTable = initSkipTable(SourceMarker)
   var start = 0
   while start < src.len:
     let srcMarker = skt.find(src, SourceMarker, start, src.len)
@@ -59,7 +55,7 @@ iterator findWaves(src: string): ChunkRec =
         srcLow = Natural(srcEnd - 4 - 1)
         fileLow = src.find(FileMarker, srcEnd, src.len) + FileMarker.len
         fileHi = src.find('"', fileLow, src.len) - 1
-      if fileLow < 0 or fileHi < 0: die(" ! Aborted: Invalid project file")
+      if fileLow < 0 or fileHi < 0: panic("Aborted: Invalid project file")
       let name = src.substr(fileLow, fileHi).replace('\\', '/')
       fr = ChunkRec(
         pre: Natural(start)..srcLow,
@@ -73,12 +69,12 @@ iterator findWaves(src: string): ChunkRec =
 
 proc setOutput(fname: string; overwrite: bool): File =
   if fileExists(fname) and not overwrite:
-    die("Output file exists, not overwriting!")
+    panic("Output file exists, not overwriting!")
   var f: File
   if f.open(fname, fmWrite):
     f
   else:
-    die("Could not open output file")
+    panic("Could not open output file")
 
 proc getUniquelyNamedFile(relDir, name: string): string =
   result = joinPath(relDir, name & NewExt)
@@ -133,12 +129,12 @@ proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
     keys = newSeqOfCap[string](nTasks)
     failedIdxs {.global.}: seq[Natural]
 
-  proc log(outP: string; idx: int; exitCode: int) =
-    if exitCode == 0:
-      log(outP)
-    else:
-      err(outP)
-      {.gcsafe.}: # think twice and then again!
+  proc logger(outP: string; idx: int; exitCode: int) =
+    {.gcsafe.}: # All logging must go through this proc invoked by a single thread
+      if exitCode == 0:
+        log(outP)
+      else:
+        err(outP)
         failedIdxs.add(idx) # Mark failed
 
   proc conversion(resCh: ptr Chan[Task]; inP, outP: string; idx: int) =
@@ -146,7 +142,7 @@ proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
       args=["-8", "-s", "--keep-foreign-metadata", "-o", outP, inP] )
     let exitCode = p.waitForExit()
     p.close()
-    resCh[].send(toTask(log(outP, idx, exitCode)))
+    resCh[].send(toTask(logger(outP, idx, exitCode)))
 
   for idx, (inP, outP) in enumerate(table.pairs):
     keys.add(inP)
@@ -155,7 +151,6 @@ proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
   pool.stopPool()
   for idx in failedIdxs: table.del(keys[idx]) # Cull failed
 
-# TODO `maybeStyledWrite` for when `isatty`
 proc main(input: string; output: string = ""; overwrite: bool = false;
   cleanup: bool = false; confirm: bool = true) =
   let project = readFile(input)
@@ -171,10 +166,10 @@ proc main(input: string; output: string = ""; overwrite: bool = false;
 
   if confirm:
     for inP, outP in toConvert.pairs():
-      stderr.styledWriteLine(styleDim, $inP, "\t", styleBright, $outP)
+      info(inP, "\t", outP)
 
   # Delayed so it's possible to get a conversion list in any case
-  if not flacIsAvailable(): die("! Aborted: flac binary is not available!")
+  if not flacIsAvailable(): panic("Aborted: flac binary is not available!")
 
   if confirm:
     stderr.writeLine("Continue? [Y/Enter]: ")
@@ -204,16 +199,16 @@ when isMainModule:
     flag("-v", "--version", help="Print version and exit", shortcircuit = true)
     option("-o", "--output", help="Output RPP name")
     arg("INPUT_rpp", nargs = 1, help = "Path to input Reaper project")
-
+  newCozyLogWriter(stderr)
   try:
     let opts = p.parse(commandLineParams())
     if fileExists(opts.INPUT_rpp):
       main(opts.INPUT_rpp, opts.output, opts.overwrite, opts.cleanup,
         confirm = (not opts.noconfirm) and stdin.isatty)
     else:
-      die("! Input file does not exist or is not accessible!")
+      panic("Input file does not exist or is not accessible!")
   except ShortCircuit as err:
     if err.flag == "argparse_help": echo p.help
     if err.flag == "version": echo fmt"rearchiver {NimblePkgVersion}"
   except UsageError:
-    die(getCurrentExceptionMsg())
+    panic(getCurrentExceptionMsg())

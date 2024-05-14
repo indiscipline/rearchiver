@@ -1,11 +1,12 @@
 # Rearchiver <img src="rearchiver.svg" align="right" alt="Rearchiver logo" width="20%"/>
+[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://github.com/indiscipline/rearchiver/blob/master/LICENSE.md)
 > [Third Hemisphere Studio](https://thirdhemisphere.studio) tooling
 
 Rearchiver prepares your [Reaper](https://reaper.fm) project for archiving:
 
 - Scans the project file for all used WAV files
 - Finds them in the project directory and converts to FLAC
-- Changes the links to the successfully converted source files input RPP file accordingly
+- Changes the links to the successfully converted source files in the project accordingly
 - Optionally deletes processed source files and their `.reapeaks`
 - Outputs the corrected project file
 

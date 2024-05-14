@@ -40,7 +40,7 @@ Download a binary from the [release assets](https://github.com/indiscipline/rear
 
 ### Building manually
 Building requires the Nim compiler and a Nim package manager (such as Nimble) to resolve the dependencies.
-Third-party libraries Rearchiver relies on: `fusion`, `threading`, `argparse`.
+Third-party libraries Rearchiver relies on: [`threading`](https://github.com/nim-lang/threading), [`argparse`](https://github.com/iffy/nim-argparse).
 Use `choosenim` to install and manage the Nim compilation toolchain.
 
 To install with Nimble:

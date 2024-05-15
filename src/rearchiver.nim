@@ -1,9 +1,9 @@
 import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs, critbits]
 import pkg/[argparse]
 import threading/channels
-import ../cozytaskpool/src/cozytaskpool
-import ../cozylogwriter/cozylogwriter
+import ../cozytaskpool/src/cozytaskpool, ../cozylogwriter/cozylogwriter, ../cozywavparser/cozywavparser
 from std/os import splitFile, joinPath, getCurrentDir
+from std/pathnorm import normalizePath
 
 #{.experimental: "views".}
 
@@ -12,20 +12,21 @@ const
   NimblePkgVersion {.strdefine.} = staticExec("git describe --tags HEAD").strip()
   HelpStr = "Rearchiver " & NimblePkgVersion & """
 
-Convert WAV files used in a Reaper project to FLAC for archiving.
+* Convert WAV files used in a Reaper project to FLAC/WAVPACK for archiving.
+* Compressed files are placed in the directory of the original.
+* The updated RPP file is written to stdout or to a filepath given (`-o`).
+* Prints a tab-separated list of file pairs to convert, unless `-y` is used.
 
-Outputs the edited RPP file to stdout, or writes to a filepath given (`-o`).
-Prints a tab-separated list of file pairs to convert, unless `-y` is used.
 A WAV file needs to reside inside the project directory to be converted.
-A working FLAC binary by xiph.org accessible by your environment is required.
+A FLAC binary by xiph.org accessible from your environment is required.
+  flac settings used: "--best --keep-foreign-metadata"
+A WAVPACK binary is used for 32/64 bit floating point files or for `--wv` mode.
+  wavpack settings used: "-hh -t -x3"
 Logs to STDERR. No guarantees."""
   SourceMarker = "<SOURCE WAVE"
   FileMarker = "FILE \""
-  NewExt = ".flac"
 
 type
-  SrcType = enum
-    WAVE, FLAC
   ChunkRec = object
     pre: Slice[Natural] # Chunk up to "<SOURCE "
     mid: Slice[Natural] # Chunk from after "WAVE" up to end of "FILE \""
@@ -35,13 +36,14 @@ type
     u.excl(T)
     u.hasKey(T) is bool
     t.pairs is (T, U)
-  CodecStr = tuple[bin, ext: string]
-  Codec = enum cFlac, cWavpack
+  CodecStr = tuple[bin, ext, mark: string]
+  Codec = enum CWav, CFlac, CWavpack
 
 const
   CodecStrs: array[Codec, CodecStr] = [
-      (bin: "flac", ext: ".flac"),
-      (bin: "wavpack", ext: ".wv"),
+      (bin: "", ext: ".wav", mark: "WAVE"),
+      (bin: "flac", ext: ".flac", mark: "FLAC"),
+      (bin: "wavpack", ext: ".wv", mark: "WAVPACK"),
     ]
 
 
@@ -52,7 +54,7 @@ func isAbsolute(path: string): bool =
 
 iterator findWaves(src: string): ChunkRec =
   ## Searches all SOURCE WAVE files and returns ChunkRec:
-  ## `pre`: indexes from start of text chunk up to "WAVE",
+  ## `pre`: indexes from start of text chunk up to "WAVE" marker,
   ## `mid`: from right after WAVE up to file quote,
   ## `name`: text inside the quotes.
   let skt: SkipTable = initSkipTable(SourceMarker)
@@ -63,7 +65,7 @@ iterator findWaves(src: string): ChunkRec =
     if srcMarker >= 0:
       let
         srcEnd = Natural(srcMarker + SourceMarker.len)
-        srcLow = Natural(srcEnd - 4 - 1)
+        srcLow = Natural(srcEnd - CodecStrs[CWav].mark.len() - 1)
         fileLow = src.find(FileMarker, srcEnd, src.len) + FileMarker.len
         fileHi = src.find('"', fileLow, src.len) - 1
       if fileLow < 0 or fileHi < 0: panic("Aborted: Invalid project file")
@@ -72,10 +74,10 @@ iterator findWaves(src: string): ChunkRec =
         pre: Natural(start)..srcLow,
         mid: srcEnd..Natural(fileLow-1),
         name: name)
-      start = fileHi + 1
-    else:
+      start = fileHi + 1 # safe, otherwise already panicked
+    else: # tail or the whole file if nothing was found
       fr = ChunkRec(pre: (Natural(start)..Natural(src.high)), name: "")
-      start = src.len
+      start = src.len # break after yield
     yield fr
 
 proc setOutput(fname: string; overwrite: bool): File =
@@ -87,20 +89,20 @@ proc setOutput(fname: string; overwrite: bool): File =
   else:
     panic("Could not open output file")
 
-proc getUniquelyNamedFile(relDir, name: string): string =
-  result = joinPath(relDir, name & NewExt)
-  var suffix = 1
-  while fileExists(result):
-    result = joinPath(relDir, &"{name}-{suffix}{NewExt}")
-    suffix.inc()
+proc getUniqueFileName(relDir, name: string; codec: Codec): string =
+  var suffix = ""
+  for counter in 1..high(int):
+    result = joinPath(relDir, name & suffix & CodecStrs[codec].ext)
+    if fileExists(result): suffix = "-" & $counter
+    else: return result
+  assert(false, "Counter exhausted. Likely a bug.")
 
-proc convCandidate(fPath: string): Option[string] =
-  ## Checks if file is in a project dir (any absolute path considered out)
-  ## and returns a unique available name for a converted file
-  if not fPath.isAbsolute():
+proc convCandidate(fPath: string; codec: Codec): Option[string] =
+  ## Returns a unique available name for a converted file
+  if fPath.len > 0:
     var (relDir, name, ext) = splitFile(fPath)
     if ext.toLowerAscii() == ".wav":            # Skip all non-wav files
-      result = some(getUniquelyNamedFile(relDir, name))
+      result = some(getUniqueFileName(relDir, name, codec))
 
 proc doClean(wavPath: string) =
   proc rm(path: string) =
@@ -112,10 +114,10 @@ proc doClean(wavPath: string) =
 
 
 proc print(file: File; project: openArray[char]; ch: ChunkRec;
-           sT: SrcType = WAVE; name: string = "") =
+           codec: Codec; name: string = "") =
   discard file.writeChars(project[ch.pre], 0, ch.pre.len)
   if ch.mid.a > ch.pre.a:
-    file.write($sT)
+    file.write(CodecStrs[codec].mark)
     discard file.writeChars(project[ch.mid], 0, ch.mid.len)
     file.write(if name != "": name else: ch.name)
 
@@ -135,13 +137,13 @@ proc codecIsAvailable(codec: Codec): Option[string] =
   else:
     none(string)
 
-proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
+proc convertAndCullFailed[T: string](table: var Associative[T, (Codec, T)]) =
   # Tried to minimize juggling string pairs aroud:
   # [M] - main thread; [T] - Task thread; [R] - receiver thread
   # - [M] Iterate table pairs, record pair indexes
   # - [M] Send pair+index to conversion thread
   # - [T] Convert & send back exit codes and output name for logging + idx for cleanup
-  # - [R] On conversion results log names and mark failed indexes
+  # - [R] After conversion log names and mark failed indexes
   # - [M] Remove failed pairs from the table, to skip them when changing the Project file
   let nTasks = table.len()
   var
@@ -157,44 +159,71 @@ proc convertAndCullFailed[T: string](table: var Associative[T, T]) =
         err(outP)
         failedIdxs.add(idx) # Mark failed
 
-  proc conversion(resCh: ptr Chan[Task]; inP, outP: string; idx: int) =
-    let p = startProcess("flac", options={poUsePath, poStdErrToStdOut},
-      args=["-8", "-s", "--keep-foreign-metadata", "-o", outP, inP] )
-    let exitCode = p.waitForExit()
-    p.close()
+  proc conversion(resCh: ptr Chan[Task]; inP, outP: string; codec: Codec; idx: int) =
+    var args: seq[string]
+    case codec
+      of CFlac: args = @["--best", "-s", "--keep-foreign-metadata", "-o", outP, inP]
+      of CWavpack: args = @["-hh", "-t", "-x3", "--no-overwrite", "-q", "-z", inP, outP]
+      of CWav: assert(false)
+    var exitCode = 0
+    try:
+      let p = startProcess(CodecStrs[codec].bin, options={poUsePath, poStdErrToStdOut}, args=args)
+      exitCode = p.waitForExit()
+      p.close()
+    except OSError as e:
+      exitCode = 1
     resCh[].send(toTask(logger(outP, idx, exitCode)))
 
-  for idx, (inP, outP) in enumerate(table.pairs):
+  for idx, inP, (codec, outP) in enumerate(table.pairs):
     keys.add(inP)
-    pool.sendTask(toTask( conversion(pool.resultsAddr(), inP, outP, idx) ))
+    pool.sendTask(toTask( conversion(pool.resultsAddr(), inP, outP, codec, idx) ))
 
   pool.stopPool()
   for idx in failedIdxs: table.excl(keys[idx]) # Cull failed
 
-proc main(input: string; output: string = ""; overwrite: bool = false;
-  cleanup: bool = false; confirm: bool = true) =
+proc chooseCodec(path: string): Codec =
+  ## Flac by default, WavPack if 64/32 bit float
+  try:
+    let wavHeader = readWavFileHeader(path)
+    if wavHeader.isFloat and wavHeader.bitsPerSample in {32, 64}: CWavpack
+    else: CFlac
+  except CatchableError:
+    warn(&"Error reading '{path}'. Trying Flac anyway.")
+    CFlac
+
+proc main(input: string; output: string = "";
+  overwrite = false, cleanup = false, confirm = true, wvonly = false) =
   let project = readFile(input)
   let outputAbs = absolutePath(output)
   var prChunks: seq[ChunkRec]
-  var toConvert: CritBitTree[string]
+  var toConvert: CritBitTree[(Codec, string)]
   setCurrentDir(input.splitPath()[0].absolutePath())
 
+  var wavpackRequested = false
   for ch in project.findWaves():
-    prChunks.add(ch)
-    let pOp = convCandidate(ch.name)
-    if pOp.isSome(): toConvert[ch.name] = pOp.get()
+    prChunks.add(ch) # including the tailing chunk with an empty name
+    let path = ch.name.normalizePath()
+    # Treat any absolute path as outside of a project & dropping. TODO: detect
+    if path.len > 0 and not path.isAbsolute() and ch.name notin toConvert:
+      let codec = if not wvonly: chooseCodec(path) else: CWavpack
+      if codec == CWavpack: wavpackRequested = true
+      let pairOp = convCandidate(path, codec)
+      if pairOp.isSome(): toConvert[ch.name] = (codec, pairOp.unsafeGet())
 
   if toConvert.len == 0:
     info("No WAV files to compress found in the project, exiting.")
     quit(0)
 
   if confirm:
-    for inP, outP in toConvert.pairs():
+    for inP, (_, outP) in toConvert.pairs():
       info(inP, "\t", outP)
 
   # Delayed so it's possible to get a conversion list in any case
-  if not codecIsAvailable(cFlac).isSome():
-    panic("Aborted: flac binary is not available!")
+  let basecodec = if wvonly: CWavpack else: CFlac
+  if not codecIsAvailable(basecodec).isSome():
+    panic("Aborted: ", CodecStrs[basecodec].bin, " binary is not available!")
+  if not wvonly and wavpackRequested and not codecIsAvailable(CWavpack).isSome():
+    err("Wavpack is not available, 64b/32b floating point files won't be compressed!")
 
   if confirm:
     stderr.writeLine("Continue? [Y/Enter]: ")
@@ -205,16 +234,16 @@ proc main(input: string; output: string = ""; overwrite: bool = false;
   convertAndCullFailed(toConvert)
 
   for ch in prChunks:
-    if toConvert.hasKey(ch.name): # Most Nim containers don't have single-lookup-get :(
-      let outP = toConvert[ch.name]
-      outF.print(project, ch, FLAC, outP)
+    if toConvert.hasKey(ch.name): # Option pattern matching in Nim when?
+      let (codec, outP) = toConvert[ch.name]
+      outF.print(project, ch, codec, outP)
     else:
-      outF.print(project, ch, WAVE)
+      outF.print(project, ch, CWav)
 
   if cleanUp: (for inP in toConvert.keys(): doClean(inP))
 
 proc healthCheck() =
-  for codec in Codec.low..Codec.high:
+  for codec in CFlac..Codec.high: # skip CWav
     let output = codecIsAvailable(codec)
     if output.isSome():
       log(output.unsafeGet())
@@ -228,16 +257,17 @@ when isMainModule:
     flag("-f", "--overwrite", help="Overwrite output RPP file if exists")
     flag("-x", "--cleanup", help="Remove converted source WAV files")
     flag("-y", "--noconfirm", help="Don't print conversion list and wait for confirmation")
+    flag("-w", "--wv", help="Use wavpack encoding only (if available)")
     flag("-c", "--healthcheck", help="Check available codec binaries and exit", shortcircuit = true)
     flag("-v", "--version", help="Print version and exit", shortcircuit = true)
     option("-o", "--output", help="Output RPP name")
     arg("INPUT_rpp", nargs = 1, help = "Path to input Reaper project")
   try:
-    let opts = p.parse(commandLineParams())
     newCozyLogWriter(stderr)
-    if fileExists(opts.INPUT_rpp):
+    let opts = p.parse(commandLineParams())
+    if opts.INPUT_rpp.len > 0 and fileExists(opts.INPUT_rpp):
       main(opts.INPUT_rpp, opts.output, opts.overwrite, opts.cleanup,
-        confirm = (not opts.noconfirm) and stdin.isatty)
+        confirm = (not opts.noconfirm) and stdin.isatty, opts.wv)
     else:
       panic("Input file does not exist or is not accessible!")
   except ShortCircuit as err:

@@ -4,3 +4,7 @@
 [submodule "cozylogwriter"]
 	path = cozylogwriter
 	url = https://github.com/indiscipline/cozylogwriter
+[submodule "cozywavparser"]
+	path = cozywavparser
+	url = https://github.com/indiscipline/cozywavparser
+	branch = main

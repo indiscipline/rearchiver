@@ -5,16 +5,17 @@
 Rearchiver prepares your [Reaper](https://reaper.fm) project for archiving:
 
 - Scans the project file for all used WAV files
-- Finds them in the project directory and converts to FLAC
+- Finds them in the project directory and converts to FLAC / WavPack
 - Changes the links to the successfully converted source files in the project accordingly
 - Optionally deletes processed source files and their `.reapeaks`
 - Outputs the corrected project file
 
-Only WAV files supported by the `flac` binary can be converted. Currently, this means 32 bit floating point PCM files will be skipped and left uncompressed!
+The `flac` encoder is used by default.
+`wavpack` is used for 64 or 32 bit floating point PCM files (which FLAC does not support) or for all files, if launched with the `--wv` option.
 
 ## Usage
-Rearchiver relies on **[Flac](https://xiph.org/flac/download.html)** for conversions,
-so the `flac` program must be present in your PATH or placed in the same directory as `rearchiver` executable.
+Rearchiver relies on **[Flac](https://xiph.org/flac/download.html)** and **[WavPack](https://www.wavpack.com/downloads.html)** for conversions,
+so at least one of the `flac` and `wavpack` programs must be present in your PATH or placed in the same directory as the `rearchiver` executable.
 
 By default the edited project file is written to the standard output, use redirection or `-o` to write to a file:
 
@@ -24,8 +25,10 @@ By default the edited project file is written to the standard output, use redire
 # write to a file
 > rearchiver INPUT.rpp -o output2.rpp
 ```
+Converted files are placed beside the originals (in the same directory).
 
-Rearchiver is interactive, it will print the pairs of the found WAV files and the proposed names for the FLACs and will ask for your confirmation. Use `-y` to bypass the confirmation.
+Rearchiver is interactive, it will print the pairs of the found WAV files and the proposed names for the compressed files and will ask for your confirmation.
+Use `-y` to skip the confirmation step.
 
 Additional options are available in help: `rearchiver --help`.
 
@@ -51,7 +54,7 @@ rearchiver -h
 ```
 
 ## TODO:
-- [ ] Add support for WavPack as an alternative codec / codec supporting 32 bit float WAV files
+- [x] Add support for WavPack as an alternative codec / codec supporting 32 bit float WAV files
 - [ ] Migrate to a proper pool for managing concurrent process execution
 - [ ] Consider if there are any practical benefits in properly parsing the project file, instead of doing it by dumb text substitution
 

@@ -46,11 +46,35 @@ const
       (bin: "wavpack", ext: ".wv", mark: "WAVPACK"),
     ]
 
-
+#[------- Utils -------]#
 func isAbsolute(path: string): bool =
   ## Force windows paths to be considered absolute on linux
   (path.len > 1 and path[0] in {'a'..'z', 'A'..'Z'} and path[1] == ':') or
   os.isAbsolute(path)
+
+func normalizePathUniform(path: string): string =
+  var normPath = path.normalizePath() # changes DirSep to match build's OS
+  # Capitalize Windows drive letter if present
+  if normPath.len >= 2 and normPath[1] == ':' and normPath[0] in {'a'..'z'}:
+    normPath[0] = normPath[0].toUpperAscii()
+  normPath
+
+func childPathTail(path, subpath: string): Option[string] =
+  ## If subpath is a child of an absolute path `path`, return the relative tail
+  runnableExamples:
+    assert childPathTail("c:/Users/bob", "C:/Users/bob/") == some("") # Drive case and trailing sep
+    assert childPathTail("C:/Users/bob", "C:/Users/bob/Docs").get == "Docs"
+    assert childPathTail("C:/Users/bob/Docs", "C:/Users/bob").isNone
+    assert childPathTail("/home/bob/projects", "/home/bob/projects/foo/main.nim").get == "foo/main.nim"
+    assert childPathTail("/home/bob/foo", "/home/bob/foobar").isNone
+  let root = path # here path is always already normalized projectDir
+  let child = normalizePathUniform(subpath)
+  if child.startsWith(root) and
+    ((child.len - root.len) == 0 or child[root.len] in {DirSep, AltSep}):
+    some(child.substr(root.len + 1)) # substr is safe
+  else:
+    none(string)
+#[------- /Utils -------]#
 
 iterator findWaves(src: string): ChunkRec =
   ## Searches all SOURCE WAVE files and returns ChunkRec:
@@ -69,7 +93,7 @@ iterator findWaves(src: string): ChunkRec =
         fileLow = src.find(FileMarker, srcEnd, src.len) + FileMarker.len
         fileHi = src.find('"', fileLow, src.len) - 1
       if fileLow < 0 or fileHi < 0: panic("Aborted: Invalid project file")
-      let name = src.substr(fileLow, fileHi).replace('\\', '/')
+      let name = src.substr(fileLow, fileHi)
       fr = ChunkRec(
         pre: Natural(start)..srcLow,
         mid: srcEnd..Natural(fileLow-1),
@@ -92,6 +116,7 @@ proc setOutput(fname: string; overwrite: bool): File =
 proc getUniqueFileName(relDir, name: string; codec: Codec): string =
   var suffix = ""
   for counter in 1..high(int):
+    # joinPath negates possible sep changes in normalizePathUniform: replaces with `DirSep`
     result = joinPath(relDir, name & suffix & CodecStrs[codec].ext)
     if fileExists(result): suffix = "-" & $counter
     else: return result
@@ -170,8 +195,7 @@ proc convertAndCullFailed[T: string](table: var Associative[T, (Codec, T)]) =
       let p = startProcess(CodecStrs[codec].bin, options={poUsePath, poStdErrToStdOut}, args=args)
       exitCode = p.waitForExit()
       p.close()
-    except OSError as e:
-      exitCode = 1
+    except OSError: exitCode = 1
     resCh[].send(toTask(logger(outP, idx, exitCode)))
 
   for idx, inP, (codec, outP) in enumerate(table.pairs):
@@ -193,22 +217,26 @@ proc chooseCodec(path: string): Codec =
 
 proc main(input: string; output: string = "";
   overwrite = false, cleanup = false, confirm = true, wvonly = false) =
-  let project = readFile(input)
-  let outputAbs = absolutePath(output)
+  let
+    project = readFile(input)
+    outputAbs = absolutePath(output)
+    projectDir = input.splitPath()[0].absolutePath().normalizePathUniform()
   var prChunks: seq[ChunkRec]
   var toConvert: CritBitTree[(Codec, string)]
-  setCurrentDir(input.splitPath()[0].absolutePath())
+  setCurrentDir(projectDir)
 
   var wavpackRequested = false
   for ch in project.findWaves():
-    prChunks.add(ch) # including the tailing chunk with an empty name
-    let path = ch.name.normalizePath()
-    # Treat any absolute path as outside of a project & dropping. TODO: detect
-    if path.len > 0 and not path.isAbsolute() and ch.name notin toConvert:
-      let codec = if not wvonly: chooseCodec(path) else: CWavpack
-      if codec == CWavpack: wavpackRequested = true
-      let pairOp = convCandidate(path, codec)
-      if pairOp.isSome(): toConvert[ch.name] = (codec, pairOp.unsafeGet())
+    prChunks.add(ch) # Add all, including the trailing chunk with an empty name
+    if ch.name.len > 0 and ch.name notin toConvert:
+      let relPath = if ch.name.isAbsolute(): childPathTail(projectDir, ch.name)
+        else: some(ch.name.normalizePath())
+      if relPath.isSome:
+        let path = relPath.unsafeGet()
+        let codec = if not wvonly: chooseCodec(path) else: CWavpack
+        if codec == CWavpack: wavpackRequested = true
+        let pairOp = convCandidate(path, codec)
+        if pairOp.isSome(): toConvert[ch.name] = (codec, pairOp.unsafeGet())
 
   if toConvert.len == 0:
     info("No WAV files to compress found in the project, exiting.")
@@ -254,9 +282,9 @@ when isMainModule:
   exitprocs.addExitProc((proc() = resetAttributes(stderr))) # TODO: necessary still?
   var p = newParser:
     help(HelpStr)
-    flag("-f", "--overwrite", help="Overwrite output RPP file if exists")
-    flag("-x", "--cleanup", help="Remove converted source WAV files")
-    flag("-y", "--noconfirm", help="Don't print conversion list and wait for confirmation")
+    flag("-f", "--overwrite", help="Overwrite output RPP")
+    flag("-x", "--cleanup", help="Remove converted WAV files and their reapeaks")
+    flag("-y", "--noconfirm", help="Skip confirmation, don't print the conversion list")
     flag("-w", "--wv", help="Use wavpack encoding only (if available)")
     flag("-c", "--healthcheck", help="Check available codec binaries and exit", shortcircuit = true)
     flag("-v", "--version", help="Print version and exit", shortcircuit = true)

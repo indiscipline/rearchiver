@@ -1,0 +1,109 @@
+name: Build and Release Nim Program
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  APP_NAME: 'rearchiver'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Setup Nim
+      uses: jiro4989/setup-nim-action@v1.1.4
+
+    - name: Install Nimble packages
+      run: nimble install -y
+
+    - name: Build the program
+      run: nimble build -y -d:release
+
+    - name: Prepare binary for release
+      run: |
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          mv "${APP_NAME}.exe" "${APP_NAME}_win64.exe"
+          echo "Binary prepared: "${APP_NAME}_win64.exe"
+        elif [ "${{ matrix.os }}" == "macOS-latest" ]; then
+          mv "${APP_NAME}" "${APP_NAME}_macos"
+          echo "Binary prepared: ${APP_NAME}_macos"
+        else
+          mv "${APP_NAME}" "${APP_NAME}_linux"
+          echo "Binary prepared: ${APP_NAME}_linux"
+        fi
+
+    - name: Upload binary as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: artifact-${{ matrix.os }}
+        path: |
+          ${APP_NAME}_win64.exe
+          ${APP_NAME}_macos
+          ${APP_NAME}_linux
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Download all build artifacts
+      uses: actions/download-artifact@v4.1.7
+      with:
+        path: ./artifacts
+        pattern: ${APP_NAME}_*
+        merge-multiple: true
+
+    - name: List artifacts
+      run: ls -R ${APP_NAME}
+
+    - name: Create release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: true
+        prerelease: false
+
+    - name: Upload Windows binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/${APP_NAME}_win64.exe
+        asset_name: ${APP_NAME}_win64.exe
+        asset_content_type: application/octet-stream
+
+    - name: Upload macOS binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/${APP_NAME}_macos
+        asset_name: ${APP_NAME}_macos
+        asset_content_type: application/octet-stream
+
+    - name: Upload Linux binary
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifacts/${APP_NAME}_linux
+        asset_name: ${APP_NAME}_linux
+        asset_content_type: application/octet-stream

@@ -17,20 +17,22 @@ The `flac` encoder is used by default.
 Rearchiver relies on **[Flac](https://xiph.org/flac/download.html)** and **[WavPack](https://www.wavpack.com/downloads.html)** for conversions,
 so at least one of the `flac` and `wavpack` programs must be present in your PATH or placed in the same directory as the `rearchiver` executable.
 
-By default the edited project file is written to the standard output, use redirection or `-o` to write to a file:
+By default[^1] the edited project file is written to a new file with the same base name as the input project plus the *"_archived.rpp"* suffix.
+You can write to standard output by setting the `--output` option to "-".
 
-```
-# redirect standard output to a file
-> rearchiver INPUT.rpp > output.rpp
-# write to a file
-> rearchiver INPUT.rpp -o output2.rpp
-```
-Converted files are placed beside the originals (in the same directory).
+- Save to a default file (writes to *"INPUT_archived.rpp"*):\
+  ```rearchiver INPUT.rpp```
+- Save to a file:\
+  ```rearchiver -o output.rpp INPUT.rpp```
+- Write to standard output:\
+  ```rearchiver -o - INPUT.rpp```
 
-Rearchiver is interactive, it will print the pairs of the found WAV files and the proposed names for the compressed files and will ask for your confirmation.
-Use `-y` to skip the confirmation step.
+Converted media files are placed beside the originals (in the same directory).
 
-Additional options are available in help: `rearchiver --help`.
+Rearchiver is interactive and will print the pairs of the found WAV files and the proposed names for the compressed files for user overview.
+A confirmation is required then. Use `-y` to skip interactive confirmation.
+
+Full list of options is available: `rearchiver --help`.
 
 ## Disclaimer
 Rearchiver tries to be conservative and will not overwrite anything unless asked by the user. However, there might be bugs.\
@@ -67,3 +69,5 @@ Open an issue for bugs, ideas and feature requests.
 Rearchiver is licensed under GNU General Public License version 3.0 or later; See `LICENSE.md` for full details.
 
 [Logo](rearchiver.svg) is licensed under Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+
+[^1]: Since v0.2.0. Previously wrote to stdout by default.

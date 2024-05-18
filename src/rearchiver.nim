@@ -13,18 +13,24 @@ const
   HelpStr = "Rearchiver " & NimblePkgVersion & """
 
 * Convert WAV files used in a Reaper project to FLAC/WAVPACK for archiving.
-* Compressed files are placed in the directory of the original.
-* The updated RPP file is written to stdout or to a filepath given (`-o`).
+* Compressed files are placed in the directory of the original project.
+* The updated RPP file is written to either:
+  - Input project's base file name plus the default/specified suffix (`-s`)
+  - User specified file path (`--output`)
+  - Standard output with '--output -'
 * Prints a tab-separated list of file pairs to convert, unless `-y` is used.
 
 A WAV file needs to reside inside the project directory to be converted.
 A FLAC binary by xiph.org accessible from your environment is required.
   flac settings used: "--best --keep-foreign-metadata"
-A WAVPACK binary is used for 32/64 bit floating point files or for `--wv` mode.
+A WAVPACK binary is used for 32b/64b floating point files or for `--wv` mode.
   wavpack settings used: "-hh -t -x3"
-Logs to STDERR. No guarantees."""
+Logs to STDERR.
+
+No guarantees."""
   SourceMarker = "<SOURCE WAVE"
   FileMarker = "FILE \""
+  DefaultOutSuffix = "_archived.rpp"
 
 type
   ChunkRec = object
@@ -215,12 +221,12 @@ proc chooseCodec(path: string): Codec =
     warn(&"Error reading '{path}'. Trying Flac anyway.")
     CFlac
 
-proc main(input: string; output: string = "";
-  overwrite = false, cleanup = false, confirm = true, wvonly = false) =
+proc main(input, output, suffix: string;
+          overwrite = false, cleanup = false, confirm = true, wvonly = false) =
   let
     project = readFile(input)
-    outputAbs = absolutePath(output)
-    projectDir = input.splitPath()[0].absolutePath().normalizePathUniform()
+    (inDir, inBName, _) = input.splitFile()
+    projectDir = inDir.absolutePath().normalizePathUniform()
   var prChunks: seq[ChunkRec]
   var toConvert: CritBitTree[(Codec, string)]
   setCurrentDir(projectDir)
@@ -257,7 +263,11 @@ proc main(input: string; output: string = "";
     stderr.writeLine("Continue? [Y/Enter]: ")
     if getch() notin ['y', 'Y', char(13)]: return
 
-  var outF = if output == "": stdout else: setOutput(outputAbs, overwrite)
+  var outF = if output == "-": stdout
+    else:
+      let outFName = if output.len == 0: projectDir / inBName & suffix else: output
+      debugEcho outFName
+      setOutput(outFName, overwrite)
 
   convertAndCullFailed(toConvert)
 
@@ -288,14 +298,29 @@ when isMainModule:
     flag("-w", "--wv", help="Use wavpack encoding only (if available)")
     flag("-c", "--healthcheck", help="Check available codec binaries and exit", shortcircuit = true)
     flag("-v", "--version", help="Print version and exit", shortcircuit = true)
-    option("-o", "--output", help="Output RPP name")
+    option("-o", "--output", help="Output RPP name. '-' writes to standard output")
+    option("-s", "--suffix", help= &"Output RPP name suffix. Default: '{DefaultOutSuffix}'")
     arg("INPUT_rpp", nargs = 1, help = "Path to input Reaper project")
   try:
     newCozyLogWriter(stderr)
     let opts = p.parse(commandLineParams())
     if opts.INPUT_rpp.len > 0 and fileExists(opts.INPUT_rpp):
-      main(opts.INPUT_rpp, opts.output, opts.overwrite, opts.cleanup,
-        confirm = (not opts.noconfirm) and stdin.isatty, opts.wv)
+      if opts.suffix_opt.isSome():
+        if opts.output.len > 0:
+          warn((if opts.output == "-": "Writing to standard output."
+            else: "Both output name and suffix given."), " Ignoring suffix.")
+          opts.suffix = ""
+        else:
+          if opts.suffix.len == 0: panic("Empty suffix is not allowed.")
+          var sxSet: set[char]
+          for c in opts.suffix: sxSet.incl(c)
+          let invalid = sxSet * invalidFilenameChars
+          if invalid != {}: panic("Invalid characters in suffix: ", invalid)
+      else: opts.suffix = DefaultOutSuffix
+
+      main(opts.INPUT_rpp, opts.output, opts.suffix,
+           opts.overwrite, opts.cleanup,
+           confirm = (not opts.noconfirm) and stdin.isatty(), opts.wv)
     else:
       panic("Input file does not exist or is not accessible!")
   except ShortCircuit as err:

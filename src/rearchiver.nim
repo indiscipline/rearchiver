@@ -1,4 +1,4 @@
-import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs, critbits]
+import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs, critbits, setutils]
 import pkg/[argparse]
 import threading/channels
 import ../cozytaskpool/src/cozytaskpool, ../cozylogwriter/cozylogwriter, ../cozywavparser/cozywavparser
@@ -42,11 +42,18 @@ type
     u.excl(T)
     u.hasKey(T) is bool
     t.pairs is (T, U)
-  CodecStr = tuple[bin, ext, mark: string]
+  OutputKind = enum # stdout / specified file name / input base name + suffix
+    okStdout, okOutputName, okInputWSuffix
+  OutputConfig = object
+    case kind: OutputKind
+    of okStdout: discard
+    of okOutputName: outputPath: string
+    of okInputWSuffix: suffix: string
   Codec = enum CWav, CFlac, CWavpack
 
+
 const
-  CodecStrs: array[Codec, CodecStr] = [
+  CodecStrs: array[Codec, tuple[bin, ext, mark: string]] = [
       (bin: "", ext: ".wav", mark: "WAVE"),
       (bin: "flac", ext: ".flac", mark: "FLAC"),
       (bin: "wavpack", ext: ".wv", mark: "WAVPACK"),
@@ -115,9 +122,9 @@ proc setOutput(fname: string; overwrite: bool): File =
     panic("Output file exists, not overwriting!")
   var f: File
   if f.open(fname, fmWrite):
+    info("Saving to ", fname)
     f
-  else:
-    panic("Could not open output file")
+  else: panic("Could not open output file")
 
 proc getUniqueFileName(relDir, name: string; codec: Codec): string =
   var suffix = ""
@@ -221,7 +228,7 @@ proc chooseCodec(path: string): Codec =
     warn(&"Error reading '{path}'. Trying Flac anyway.")
     CFlac
 
-proc main(input, output, suffix: string;
+proc main(input: string; output: OutputConfig;
           overwrite = false, cleanup = false, confirm = true, wvonly = false) =
   let
     project = readFile(input)
@@ -260,14 +267,13 @@ proc main(input, output, suffix: string;
     err("Wavpack is not available, 64b/32b floating point files won't be compressed!")
 
   if confirm:
-    stderr.writeLine("Continue? [Y/Enter]: ")
+    stderr.write("Continue? [Y/Enter]:\r")
     if getch() notin ['y', 'Y', char(13)]: return
 
-  var outF = if output == "-": stdout
-    else:
-      let outFName = if output.len == 0: projectDir / inBName & suffix else: output
-      debugEcho outFName
-      setOutput(outFName, overwrite)
+  let outF = case output.kind
+    of okStdout: stdout
+    of okOutputName: setOutput(output.outputPath, overwrite)
+    of okInputWSuffix: setOutput(projectDir / inBName & output.suffix, overwrite)
 
   convertAndCullFailed(toConvert)
 
@@ -305,22 +311,24 @@ when isMainModule:
     newCozyLogWriter(stderr)
     let opts = p.parse(commandLineParams())
     if opts.INPUT_rpp.len > 0 and fileExists(opts.INPUT_rpp):
-      if opts.suffix_opt.isSome():
-        if opts.output.len > 0:
-          warn((if opts.output == "-": "Writing to standard output."
-            else: "Both output name and suffix given."), " Ignoring suffix.")
-          opts.suffix = ""
+      let outputConfig = if opts.output_opt.isSome() and opts.output == "-":
+          if opts.suffix_opt.isSome(): warn("Writing to standard output, ignoring suffix.")
+          OutputConfig(kind: okStdout)
+        elif opts.output_opt.isSome() and opts.output.len > 0:
+          if opts.suffix_opt.isSome(): warn("Both output name and suffix given, ignoring suffix.")
+          OutputConfig(kind: okOutputName, outputPath: opts.output)
         else:
-          if opts.suffix.len == 0: panic("Empty suffix is not allowed.")
-          var sxSet: set[char]
-          for c in opts.suffix: sxSet.incl(c)
-          let invalid = sxSet * invalidFilenameChars
-          if invalid != {}: panic("Invalid characters in suffix: ", invalid)
-      else: opts.suffix = DefaultOutSuffix
+          if opts.suffix_opt.isSome():
+            if opts.suffix.len == 0: panic("Empty suffix is not allowed.")
+            let invalid = opts.suffix.toSet() * invalidFilenameChars
+            if invalid != {}: panic("Invalid characters in suffix: ", invalid)
+            OutputConfig(kind: okInputWSuffix, suffix: opts.suffix)
+          else:
+            OutputConfig(kind: okInputWSuffix, suffix: DefaultOutSuffix)
 
-      main(opts.INPUT_rpp, opts.output, opts.suffix,
-           opts.overwrite, opts.cleanup,
-           confirm = (not opts.noconfirm) and stdin.isatty(), opts.wv)
+      main(input = opts.INPUT_rpp, output = outputConfig,
+           overwrite = opts.overwrite, cleanup = opts.cleanup,
+           confirm = (not opts.noconfirm) and stdin.isatty(), wvonly = opts.wv)
     else:
       panic("Input file does not exist or is not accessible!")
   except ShortCircuit as err:

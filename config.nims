@@ -1,5 +1,6 @@
---mm:arc
+--mm:atomicArc
 --threads:on
+--d:useMalloc
 
 when defined(release) or defined(danger):
   --opt:speed

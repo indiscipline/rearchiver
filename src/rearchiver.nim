@@ -197,7 +197,7 @@ proc convertAndCullFailed[T: string](table: var Associative[T, (Codec, T)]) =
         err(outP)
         failedIdxs.add(idx) # Mark failed
 
-  proc conversion(resCh: ptr Chan[Task]; inP, outP: string; codec: Codec; idx: int) =
+  proc conversion(resCh: Chan[Task]; inP, outP: string; codec: Codec; idx: int) =
     var args: seq[string]
     case codec
       of CFlac: args = @["--best", "-s", "--keep-foreign-metadata", "-o", outP, inP]
@@ -209,11 +209,11 @@ proc convertAndCullFailed[T: string](table: var Associative[T, (Codec, T)]) =
       exitCode = p.waitForExit()
       p.close()
     except OSError: exitCode = 1
-    resCh[].send(toTask(logger(outP, idx, exitCode)))
+    resCh.send(toTask(logger(outP, idx, exitCode)))
 
   for idx, inP, (codec, outP) in enumerate(table.pairs):
     keys.add(inP)
-    pool.sendTask(toTask( conversion(pool.resultsAddr(), inP, outP, codec, idx) ))
+    pool.sendTask(toTask( conversion(pool.resultsChan, inP, outP, codec, idx) ))
 
   pool.stopPool()
   for idx in failedIdxs: table.excl(keys[idx]) # Cull failed
@@ -320,8 +320,8 @@ when isMainModule:
         else:
           if opts.suffix_opt.isSome():
             if opts.suffix.len == 0: panic("Empty suffix is not allowed.")
-            let invalid = opts.suffix.toSet() * invalidFilenameChars
-            if invalid != {}: panic("Invalid characters in suffix: ", invalid)
+            let invalid: set[char] = opts.suffix.toSet() * invalidFilenameChars
+            if invalid != {}: panic("Invalid characters in suffix: ", $invalid)
             OutputConfig(kind: okInputWSuffix, suffix: opts.suffix)
           else:
             OutputConfig(kind: okInputWSuffix, suffix: DefaultOutSuffix)

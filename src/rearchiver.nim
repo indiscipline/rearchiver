@@ -224,8 +224,8 @@ proc chooseCodec(path: string): Codec =
     let wavHeader = readWavFileHeader(path)
     if wavHeader.isFloat and wavHeader.bitsPerSample in {32, 64}: CWavpack
     else: CFlac
-  except CatchableError:
-    warn(&"Error reading '{path}'. Trying Flac anyway.")
+  except CatchableError as e:
+    warn(&"Error reading '{path}': {e.msg}. Trying Flac anyway.")
     CFlac
 
 proc main(input: string; output: OutputConfig;

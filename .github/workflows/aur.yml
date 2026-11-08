@@ -1,0 +1,47 @@
+name: Publish AUR package
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aur-rearchiver-bin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: aur-release
+    env:
+      TAG_NAME: ${{ github.event.release.tag_name || inputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Generate PKGBUILD
+        run: |
+          mkdir -p aur
+          cd aur
+          bash ../packaging/aur/generate.sh "$TAG_NAME"
+
+      - name: Publish to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v4.2.0
+        with:
+          pkgname: rearchiver-bin
+          pkgbuild: ./aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: Update to ${{ env.TAG_NAME }}
+          allow_empty_commits: true
+          test: true
+          ssh_keyscan_types: rsa,ecdsa,ed25519

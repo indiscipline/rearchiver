@@ -34,9 +34,26 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Setup Nim
+        if: runner.os != 'macOS'
         uses: jiro4989/setup-nim-action@v2.3.1
         with:
           nim-version: ${{ matrix.nim }}
+
+      - name: Setup Nim (macOS prebuilt)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ matrix.nim }}"
+          if [ "$version" = stable ]; then
+            version="$(curl -fsSL https://nim-lang.org/channels/stable)"
+          fi
+          archive="${RUNNER_TEMP}/nim.tar.xz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://nim-lang.org/download/nim-${version}-macosx_x64.tar.xz"
+          tar -xf "$archive" -C "$RUNNER_TEMP"
+          echo "${RUNNER_TEMP}/nim-${version}/bin" >> "$GITHUB_PATH"
+          echo "${HOME}/.nimble/bin" >> "$GITHUB_PATH"
 
       - name: Build
         run: nimble build -y

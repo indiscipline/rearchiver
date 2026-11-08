@@ -10,9 +10,10 @@ bin           = @["rearchiver"]
 
 # Dependencies
 
-requires "nim >= 2.0.0", "argparse >= 3.0.0", "threading >= 0.2.1"
+requires "nim >= 2.2.10", "threading >= 0.2.1"
 requires "cozytaskpool == 0.1.2"
 requires "cozylogwriter == 0.1.0"
+requires "cozycliparser == 0.3.3"
 requires "https://github.com/indiscipline/cozywavparser#v0.1.0"
 
 task release, "Build release":

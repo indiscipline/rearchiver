@@ -44,8 +44,10 @@ Rearchiver is tested to work under Windows and GNU/Linux. Probably works on OSX 
 Download a binary from the [release assets](https://github.com/indiscipline/rearchiver/releases/latest) or compile yourself.
 
 ### Building manually
-Building requires the Nim compiler and a Nim package manager (such as Nimble) to resolve the dependencies.
-Third-party libraries Rearchiver relies on: [`threading`](https://github.com/nim-lang/threading), [`argparse`](https://github.com/iffy/nim-argparse).
+Building requires Nim >= 2.2.10 and a Nim package manager (such as Nimble) to resolve the dependencies.
+Rearchiver relies on [`threading`](https://github.com/nim-lang/threading) and the cozy stack:
+`cozytaskpool`, `cozylogwriter`, `cozywavparser`, and
+[`cozycliparser`](https://github.com/indiscipline/cozycliparser).
 Use `choosenim` to install and manage the Nim compilation toolchain.
 
 To install with Nimble:

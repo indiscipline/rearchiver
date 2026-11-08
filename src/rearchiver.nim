@@ -1,8 +1,7 @@
-import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs, critbits, setutils]
-import pkg/[argparse]
-import threading/channels
-import cozytaskpool, cozylogwriter, cozywavparser
-from std/os import splitFile, joinPath, getCurrentDir
+import std/[strutils, strformat, terminal, osproc, os, options, tables, tasks, enumerate, exitprocs, critbits, setutils]
+import pkg/cozycliparser
+import pkg/threading/channels
+import pkg/[cozytaskpool, cozylogwriter, cozywavparser]
 from std/pathnorm import normalizePath
 
 #{.experimental: "views".}
@@ -295,47 +294,60 @@ proc healthCheck() =
       warn(CodecStrs[codec].bin, " not available!")
 
 when isMainModule:
-  exitprocs.addExitProc((proc() = resetAttributes(stderr))) # TODO: necessary still?
-  var p = newParser:
-    help(HelpStr)
-    flag("-f", "--overwrite", help="Overwrite output RPP")
-    flag("-x", "--cleanup", help="Remove converted WAV files and their reapeaks")
-    flag("-y", "--noconfirm", help="Skip confirmation, don't print the conversion list")
-    flag("-w", "--wv", help="Use wavpack encoding only (if available)")
-    flag("-c", "--healthcheck", help="Check available codec binaries and exit", shortcircuit = true)
-    flag("-v", "--version", help="Print version and exit", shortcircuit = true)
-    option("-o", "--output", help="Output RPP name. '-' writes to standard output")
-    option("-s", "--suffix", help= &"Output RPP name suffix. Default: '{DefaultOutSuffix}'")
-    arg("INPUT_rpp", nargs = 1, help = "Path to input Reaper project")
-  try:
-    newCozyLogWriter(stderr)
-    let opts = p.parse(commandLineParams())
-    if opts.INPUT_rpp.len > 0 and fileExists(opts.INPUT_rpp):
-      let outputConfig = if opts.output_opt.isSome() and opts.output == "-":
-          if opts.suffix_opt.isSome(): warn("Writing to standard output, ignoring suffix.")
-          OutputConfig(kind: okStdout)
-        elif opts.output_opt.isSome() and opts.output.len > 0:
-          if opts.suffix_opt.isSome(): warn("Both output name and suffix given, ignoring suffix.")
-          OutputConfig(kind: okOutputName, outputPath: opts.output)
-        else:
-          if opts.suffix_opt.isSome():
-            if opts.suffix.len == 0: panic("Empty suffix is not allowed.")
-            let invalid: set[char] = opts.suffix.toSet() * invalidFilenameChars
-            if invalid != {}: panic("Invalid characters in suffix: ", $invalid)
-            OutputConfig(kind: okInputWSuffix, suffix: opts.suffix)
-          else:
-            OutputConfig(kind: okInputWSuffix, suffix: DefaultOutSuffix)
+  type CliOptions = object
+    input: string
+    output: Option[string]
+    suffix: Option[string]
+    overwrite, cleanup, noconfirm, wv: bool
 
-      main(input = opts.INPUT_rpp, output = outputConfig,
-           overwrite = opts.overwrite, cleanup = opts.cleanup,
-           confirm = (not opts.noconfirm) and stdin.isatty(), wvonly = opts.wv)
-    else:
-      panic("Input file does not exist or is not accessible!")
-  except ShortCircuit as err:
-    if err.flag == "argparse_help": echo p.help
-    elif err.flag == "version": echo fmt"rearchiver {NimblePkgVersion}"
-    elif err.flag == "healthcheck":
+  exitprocs.addExitProc((proc() = resetAttributes(stderr))) # TODO: necessary still?
+  var opts: CliOptions
+  newCozyLogWriter(stderr)
+
+  buildParser(parserConfig(helpPrefix = HelpStr), "rearchiver", "Cli", GnuMode):
+    flag('f', "overwrite", "Overwrite output RPP") do ():
+      opts.overwrite = true
+    flag('x', "cleanup", "Remove converted WAV files and their reapeaks") do ():
+      opts.cleanup = true
+    flag('y', "noconfirm", "Skip confirmation, don't print the conversion list") do ():
+      opts.noconfirm = true
+    flag('w', "wv", "Use wavpack encoding only (if available)") do ():
+      opts.wv = true
+    flag('c', "healthcheck", "Check available codec binaries and exit") do ():
       newCozyLogWriter(stdout)
       healthCheck()
-  except UsageError:
-    panic(getCurrentExceptionMsg())
+      quit(0)
+    flag('v', "version", "Print version and exit") do ():
+      echo fmt"rearchiver {NimblePkgVersion}"
+      quit(0)
+    opt('o', "output", "Output RPP name. '-' writes to standard output", "RPP") do (val: string):
+      opts.output = some(val)
+    opt('s', "suffix", "Output RPP name suffix. Default: '_archived.rpp'", "SUFFIX") do (val: string):
+      opts.suffix = some(val)
+    arg("INPUT_RPP", "Path to input Reaper project") do (val: string):
+      if opts.input.len > 0: panic("Too many positional arguments")
+      opts.input = val
+    run do ():
+      if opts.input.len > 0 and fileExists(opts.input):
+        let outputConfig =
+          if opts.output.isSome and opts.output.get == "-":
+            if opts.suffix.isSome: warn("Writing to standard output, ignoring suffix.")
+            OutputConfig(kind: okStdout)
+          elif opts.output.isSome and opts.output.get.len > 0:
+            if opts.suffix.isSome: warn("Both output name and suffix given, ignoring suffix.")
+            OutputConfig(kind: okOutputName, outputPath: opts.output.get)
+          else:
+            if opts.suffix.isSome:
+              let suffix = opts.suffix.get
+              if suffix.len == 0: panic("Empty suffix is not allowed.")
+              let invalid: set[char] = suffix.toSet() * invalidFilenameChars
+              if invalid != {}: panic("Invalid characters in suffix: ", $invalid)
+              OutputConfig(kind: okInputWSuffix, suffix: suffix)
+            else:
+              OutputConfig(kind: okInputWSuffix, suffix: DefaultOutSuffix)
+
+        main(input = opts.input, output = outputConfig,
+             overwrite = opts.overwrite, cleanup = opts.cleanup,
+             confirm = (not opts.noconfirm) and stdin.isatty(), wvonly = opts.wv)
+      else:
+        panic("Input file does not exist or is not accessible!")

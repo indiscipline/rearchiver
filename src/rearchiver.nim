@@ -200,7 +200,7 @@ proc convertAndCullFailed[T: string](table: var Associative[T, (Codec, T)]) =
     var args: seq[string]
     case codec
       of CFlac: args = @["--best", "-s", "--keep-foreign-metadata", "-o", outP, inP]
-      of CWavpack: args = @["-hh", "-t", "-x3", "--no-overwrite", "-q", "-z", inP, outP]
+      of CWavpack: args = @["-hh", "-t", "-x3", "--no-overwrite", "-q", "-z", "-o", outP, inP]
       of CWav: assert(false)
     var exitCode = 0
     try:

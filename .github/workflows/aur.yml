@@ -42,6 +42,5 @@ jobs:
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: Update to ${{ env.TAG_NAME }}
-          allow_empty_commits: true
           test: true
           ssh_keyscan_types: rsa,ecdsa,ed25519

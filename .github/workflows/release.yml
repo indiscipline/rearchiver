@@ -6,106 +6,80 @@ on:
       - 'v*.*.*'
 
 env:
-  APP_NAME: 'rearchiver'
+  APP_NAME: rearchiver
+  # Release binaries use the latest stable Nim. The supported minimum
+  # remains Nim 2.0 and is declared in the .nimble metadata.
+  NIM_VERSION: stable
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macOS-latest]
+        include:
+          - os: ubuntu-latest
+            asset: rearchiver_linux
+          - os: windows-latest
+            asset: rearchiver_win64.exe
+          # macos-latest now tracks arm64; keep the release asset x86_64.
+          - os: macos-15-intel
+            asset: rearchiver_macos
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        submodules: true
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          submodules: true
 
-    - name: Setup Nim
-      uses: jiro4989/setup-nim-action@v1.1.4
+      - name: Setup Nim
+        uses: jiro4989/setup-nim-action@v2.3.1
+        with:
+          nim-version: ${{ env.NIM_VERSION }}
 
-    - name: Install Nimble packages & build the program
-      run: nimble build -y -d:release
+      - name: Build
+        run: nimble build -y -d:release
 
-    - name: Prepare binary for release
-      run: |
-        if [ "${{ matrix.os }}" == "windows-latest" ]; then
-          mv "${APP_NAME}.exe" "${{ runner.workspace }}/${APP_NAME}_win64.exe"
-          echo "Binary prepared: ${{ runner.workspace }}/${APP_NAME}_win64.exe"
-        elif [ "${{ matrix.os }}" == "macOS-latest" ]; then
-          mv "${APP_NAME}" "${{ runner.workspace }}/${APP_NAME}_macos"
-          echo "Binary prepared: ${{ runner.workspace }}/${APP_NAME}_macos"
-        else
-          mv "${APP_NAME}" "${{ runner.workspace }}/${APP_NAME}_linux"
-          echo "Binary prepared: ${{ runner.workspace }}/${APP_NAME}_linux"
-        fi
-      shell: bash
+      - name: Prepare binary
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "${APP_NAME}.exe" "artifacts/${{ matrix.asset }}"
+          else
+            cp "${APP_NAME}" "artifacts/${{ matrix.asset }}"
+          fi
 
-    - name: Upload binary as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: artifact-${{ matrix.os }}
-        path: |
-          ${{ runner.workspace }}/${{ env.APP_NAME }}_win64.exe
-          ${{ runner.workspace }}/${{ env.APP_NAME }}_macos
-          ${{ runner.workspace }}/${{ env.APP_NAME }}_linux
+      - name: Upload binary
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ${{ matrix.asset }}
+          path: artifacts/${{ matrix.asset }}
+          if-no-files-found: error
 
   release:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        submodules: true
+      - name: Download binaries
+        uses: actions/download-artifact@v8.0.2
+        with:
+          path: ./dist
+          merge-multiple: true
 
-    - name: Download all build artifacts
-      uses: actions/download-artifact@v4.1.7
-      with:
-        path: ./artifacts
-        pattern: 'artifact-*'
-        merge-multiple: true
+      - name: List binaries
+        run: ls -lR ./dist
 
-    - name: List artifacts
-      run: ls -R ./artifacts
-
-    - name: Create release
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: true
-        prerelease: false
-
-    - name: Upload Windows binary
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./artifacts/${{ env.APP_NAME }}_win64.exe
-        asset_name: ${{ env.APP_NAME }}_win64.exe
-        asset_content_type: application/octet-stream
-
-    - name: Upload macOS binary
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./artifacts/${{ env.APP_NAME }}_macos
-        asset_name: ${{ env.APP_NAME }}_macos
-        asset_content_type: application/octet-stream
-
-    - name: Upload Linux binary
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./artifacts/${{ env.APP_NAME }}_linux
-        asset_name: ${{ env.APP_NAME }}_linux
-        asset_content_type: application/octet-stream
+      - name: Create release
+        uses: softprops/action-gh-release@v3.0.4
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: ./dist/*

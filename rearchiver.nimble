@@ -16,6 +16,10 @@ requires "cozylogwriter == 0.1.0"
 requires "cozycliparser == 0.3.3"
 requires "https://github.com/indiscipline/cozywavparser#v0.1.0"
 
+task test, "Build and run integration tests":
+  exec "nimble build -y"
+  exec "nim r tests/test_integration.nim"
+
 task release, "Build release":
   let binName = bin[0] & (when defined(windows): ".exe" else: "")
   exec(&"nim c --define:release --out:{binName} src/{bin[0]}.nim")

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            nim: '2.0.16'
+          - os: ubuntu-latest
+            nim: stable
+          - os: windows-latest
+            nim: stable
+          - os: macos-15-intel
+            nim: stable
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Setup Nim
+        uses: jiro4989/setup-nim-action@v2.3.1
+        with:
+          nim-version: ${{ matrix.nim }}
+
+      - name: Build
+        run: nimble build -y

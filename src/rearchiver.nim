@@ -1,7 +1,7 @@
 import std/[strutils, strformat, terminal, osproc, options, tables, tasks, enumerate, exitprocs, critbits, setutils]
 import pkg/[argparse]
 import threading/channels
-import ../cozytaskpool/src/cozytaskpool, ../cozylogwriter/cozylogwriter, ../cozywavparser/cozywavparser
+import cozytaskpool, cozylogwriter, cozywavparser
 from std/os import splitFile, joinPath, getCurrentDir
 from std/pathnorm import normalizePath
 

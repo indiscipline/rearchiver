@@ -169,6 +169,45 @@ suite "rearchiver integration":
     check fileExists(base / "canonical-pcm16.wav")
     check not fileExists(base / "canonical-pcm16.flac")
 
+  test "aliased sources share one conversion":
+    requireTool("flac"):
+      let tempDir = newTempDir("alias")
+      defer: removeDir(tempDir)
+      copyWavs(tempDir, ["canonical-pcm16.wav"])
+      writeProject(tempDir,
+        ["canonical-pcm16.wav", "sub/../canonical-pcm16.wav"])
+
+      let (output, code) = runRearchiver(
+        tempDir, ["-y", "-o", "out.rpp", "test.rpp"])
+      check code == 0
+      check fileExists(tempDir / "canonical-pcm16.flac")
+      check not fileExists(tempDir / "canonical-pcm16-1.flac")
+      check hasTaggedLine(output, "[LOG]", "canonical-pcm16.flac")
+      let outputRpp = readFile(tempDir / "out.rpp").normalized
+      check outputRpp.count("SOURCE FLAC FILE \"canonical-pcm16.flac\"") == 2
+
+  when not (defined(windows) or defined(macosx)):
+    test "case-variant sources get distinct outputs":
+      requireTool("flac"):
+        let tempDir = newTempDir("case")
+        defer: removeDir(tempDir)
+        copyFile(getCurrentDir() / "tests" / "wavs" / "canonical-pcm16.wav",
+                 tempDir / "a.wav")
+        copyFile(getCurrentDir() / "tests" / "wavs" / "fllr-after-fmt.wav",
+                 tempDir / "a.WAV")
+        writeProject(tempDir, ["a.wav", "a.WAV"])
+
+        let (output, code) = runRearchiver(
+          tempDir, ["-y", "-o", "out.rpp", "test.rpp"])
+        check code == 0
+        check fileExists(tempDir / "a.flac")
+        check fileExists(tempDir / "a-1.flac")
+        check hasTaggedLine(output, "[LOG]", "a.flac")
+        check hasTaggedLine(output, "[LOG]", "a-1.flac")
+        let outputRpp = readFile(tempDir / "out.rpp").normalized
+        check outputRpp.contains("SOURCE FLAC FILE \"a.flac\"")
+        check outputRpp.contains("SOURCE FLAC FILE \"a-1.flac\"")
+
   test "default output suffix":
     requireTool("flac"):
       let tempDir = newTempDir("suffix")

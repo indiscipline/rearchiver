@@ -1,4 +1,4 @@
-import std/[strutils, strformat, terminal, osproc, os, options, tables, tasks, enumerate, exitprocs, critbits, setutils]
+import std/[strutils, strformat, terminal, osproc, os, options, tasks, enumerate, exitprocs, critbits, setutils]
 import pkg/cozycliparser
 import pkg/threading/channels
 import pkg/[cozytaskpool, cozylogwriter, cozywavparser]
@@ -41,6 +41,9 @@ type
     u.excl(T)
     u.hasKey(T) is bool
     t.pairs is (T, U)
+  StringSet = concept s, var m
+    s.contains(string) is bool
+    m.containsOrIncl(string) is bool
   OutputKind = enum # stdout / specified file name / input base name + suffix
     okStdout, okOutputName, okInputWSuffix
   OutputConfig = object
@@ -97,6 +100,15 @@ func projectRelativePath(projectDir, name: string): Option[string] =
   ## Lexical only: `..` is resolved, not symlinks.
   let path = if name.isAbsolute(): name else: projectDir / name
   childPathTail(projectDir, path)
+
+func outputKey(path: string): string {.inline.} =
+  ## Collapse case where the filesystem normally does. ASCII-only, matching
+  ## `cmpPaths`. An unnecessary suffix on a case-sensitive macOS volume is
+  ## safer than two conversions racing on one name.
+  when defined(windows) or defined(macosx):
+    path.toLowerAscii()
+  else:
+    path
 #[------- /Utils -------]#
 
 iterator findWaves(src: string): ChunkRec =
@@ -139,21 +151,26 @@ proc setOutput(fname: string; overwrite: bool): File =
     f
   else: panic("Could not open output file")
 
-proc getUniqueFileName(relDir, name: string; codec: Codec): string =
+proc getUniqueFileName(relDir, name: string; codec: Codec;
+                       planned: var StringSet): string =
   var suffix = ""
   for counter in 1..high(int):
-    # joinPath negates possible sep changes in normalizePathUniform: replaces with `DirSep`
+    # joinPath negates possible sep changes in normalizePathUniform:
+    # replaces with `DirSep`
     result = joinPath(relDir, name & suffix & CodecStrs[codec].ext)
-    if fileExists(result): suffix = "-" & $counter
-    else: return result
+    if not fileExists(result) and
+       not planned.containsOrIncl(outputKey(result)):
+      return result
+    suffix = "-" & $counter
   assert(false, "Counter exhausted. Likely a bug.")
 
-proc convCandidate(fPath: string; codec: Codec): Option[string] =
+proc convCandidate(fPath: string; codec: Codec;
+                   planned: var StringSet): Option[string] =
   ## Returns a unique available name for a converted file
   if fPath.len > 0:
     var (relDir, name, ext) = splitFile(fPath)
     if ext.toLowerAscii() == ".wav":            # Skip all non-wav files
-      result = some(getUniqueFileName(relDir, name, codec))
+      result = some(getUniqueFileName(relDir, name, codec, planned))
 
 proc doClean(wavPath: string) =
   proc rm(path: string) =
@@ -247,21 +264,31 @@ proc main(input: string; output: OutputConfig;
     project = readFile(input)
     (inDir, inBName, _) = input.splitFile()
     projectDir = inDir.absolutePath().normalizePathUniform()
-  var prChunks: seq[ChunkRec]
-  var toConvert: CritBitTree[(Codec, string)]
+  var
+    prChunks: seq[ChunkRec]
+    toConvert: CritBitTree[(Codec, string)]
+    sourcePaths = default(CritBitTree[Option[string]])
+    plannedOutputs = default(CritBitTree[void])
   setCurrentDir(projectDir)
 
   var wavpackRequested = false
   for ch in project.findWaves():
     prChunks.add(ch) # Add all, including the trailing chunk with an empty name
-    if ch.name.len > 0 and ch.name notin toConvert:
-      let relPath = projectRelativePath(projectDir, ch.name)
+    if ch.name.len > 0:
+      var relPath = none(string)
+      if sourcePaths.hasKey(ch.name):
+        relPath = sourcePaths[ch.name]
+      else:
+        relPath = projectRelativePath(projectDir, ch.name)
+        sourcePaths[ch.name] = relPath
       if relPath.isSome:
         let path = relPath.unsafeGet()
-        let codec = if not wvonly: chooseCodec(path) else: CWavpack
-        if codec == CWavpack: wavpackRequested = true
-        let pairOp = convCandidate(path, codec)
-        if pairOp.isSome(): toConvert[ch.name] = (codec, pairOp.unsafeGet())
+        if not toConvert.hasKey(path):
+          let codec = if not wvonly: chooseCodec(path) else: CWavpack
+          let pairOp = convCandidate(path, codec, plannedOutputs)
+          if pairOp.isSome():
+            if codec == CWavpack: wavpackRequested = true
+            toConvert[path] = (codec, pairOp.unsafeGet())
 
   if toConvert.len == 0:
     info("No WAV files to compress found in the project, exiting.")
@@ -290,8 +317,11 @@ proc main(input: string; output: OutputConfig;
   convertAndCullFailed(toConvert)
 
   for ch in prChunks:
-    if toConvert.hasKey(ch.name): # Option pattern matching in Nim when?
-      let (codec, outP) = toConvert[ch.name]
+    var target = ""
+    if ch.name.len > 0 and sourcePaths.hasKey(ch.name):
+      target = sourcePaths[ch.name].get("")
+    if target.len > 0 and toConvert.hasKey(target):
+      let (codec, outP) = toConvert[target]
       outF.print(project, ch, codec, outP)
     else:
       outF.print(project, ch, CWav)

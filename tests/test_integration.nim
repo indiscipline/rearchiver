@@ -154,6 +154,21 @@ suite "rearchiver integration":
     check code == 1
     check elapsedMs < timeoutMs div 2
 
+  test "relative source cannot escape the project directory":
+    let base = newTempDir("escape")
+    defer: removeDir(base)
+    let projectDir = base / "project"
+    createDir(projectDir)
+    copyWavs(base, ["canonical-pcm16.wav"])
+    writeFile(projectDir / "test.rpp",
+      rppFor(["../canonical-pcm16.wav"]))
+
+    let (_, code) = runRearchiver(
+      projectDir, ["-y", "-x", "-o", "out.rpp", "test.rpp"])
+    check code == 0
+    check fileExists(base / "canonical-pcm16.wav")
+    check not fileExists(base / "canonical-pcm16.flac")
+
   test "default output suffix":
     requireTool("flac"):
       let tempDir = newTempDir("suffix")

@@ -79,13 +79,24 @@ func childPathTail(path, subpath: string): Option[string] =
     assert childPathTail("C:/Users/bob/Docs", "C:/Users/bob").isNone
     assert childPathTail("/home/bob/projects", "/home/bob/projects/foo/main.nim").get == "foo/main.nim"
     assert childPathTail("/home/bob/foo", "/home/bob/foobar").isNone
+    when defined(posix):
+      assert childPathTail("/", "/foo/bar.wav").get == "foo/bar.wav"
   let root = path # here path is always already normalized projectDir
   let child = normalizePathUniform(subpath)
+  let rootEndsWithSep = root.len > 0 and root[^1] in {DirSep, AltSep}
   if child.startsWith(root) and
-    ((child.len - root.len) == 0 or child[root.len] in {DirSep, AltSep}):
-    some(child.substr(root.len + 1)) # substr is safe
+    (rootEndsWithSep or (child.len - root.len) == 0 or
+     child[root.len] in {DirSep, AltSep}):
+    let tailStart = if rootEndsWithSep: root.len else: root.len + 1
+    some(child.substr(tailStart)) # substr is safe
   else:
     none(string)
+
+func projectRelativePath(projectDir, name: string): Option[string] =
+  ## Returns `name` relative to `projectDir`, or none if it escapes it.
+  ## Lexical only: `..` is resolved, not symlinks.
+  let path = if name.isAbsolute(): name else: projectDir / name
+  childPathTail(projectDir, path)
 #[------- /Utils -------]#
 
 iterator findWaves(src: string): ChunkRec =
@@ -244,8 +255,7 @@ proc main(input: string; output: OutputConfig;
   for ch in project.findWaves():
     prChunks.add(ch) # Add all, including the trailing chunk with an empty name
     if ch.name.len > 0 and ch.name notin toConvert:
-      let relPath = if ch.name.isAbsolute(): childPathTail(projectDir, ch.name)
-        else: some(ch.name.normalizePath())
+      let relPath = projectRelativePath(projectDir, ch.name)
       if relPath.isSome:
         let path = relPath.unsafeGet()
         let codec = if not wvonly: chooseCodec(path) else: CWavpack

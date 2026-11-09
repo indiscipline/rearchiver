@@ -96,14 +96,14 @@ iterator findWaves(src: string): ChunkRec =
   let skt: SkipTable = initSkipTable(SourceMarker)
   var start = 0
   while start < src.len:
-    let srcMarker = skt.find(src, SourceMarker, start, src.len)
+    let srcMarker = skt.find(src, SourceMarker, start, src.high)
     var fr: ChunkRec
     if srcMarker >= 0:
       let
         srcEnd = Natural(srcMarker + SourceMarker.len)
         srcLow = Natural(srcEnd - CodecStrs[CWav].mark.len() - 1)
-        fileLow = src.find(FileMarker, srcEnd, src.len) + FileMarker.len
-        fileHi = src.find('"', fileLow, src.len) - 1
+        fileLow = src.find(FileMarker, srcEnd, src.high) + FileMarker.len
+        fileHi = src.find('"', fileLow, src.high) - 1
       if fileLow < 0 or fileHi < 0: panic("Aborted: Invalid project file")
       let name = src.substr(fileLow, fileHi)
       fr = ChunkRec(

@@ -110,6 +110,20 @@ suite "rearchiver integration":
           options = {poUsePath, poStdErrToStdOut})
         check flacCode == 0
 
+  test "source search at project tail stays in bounds":
+    let tempDir = newTempDir("tail")
+    defer: removeDir(tempDir)
+    # Regression test: a project whose trailing bytes align the final
+    # SOURCE WAVE lookup flush with the end of the file used to raise
+    # IndexDefect. The source is outside the project directory, so rearchiver
+    # skips it and no conversion (or codec binary) is involved.
+    writeFile(tempDir / "test.rpp",
+      rppFor([getTempDir() / "rearchiver-test-outside.wav"]) & "xxxxxxxxxV")
+
+    let (_, code) = runRearchiver(
+      tempDir, ["-y", "-o", "out.rpp", "test.rpp"])
+    check code == 0
+
   test "default output suffix":
     requireTool("flac"):
       let tempDir = newTempDir("suffix")

@@ -1,4 +1,4 @@
-import std/[os, osproc, streams, strutils, unittest]
+import std/[monotimes, os, osproc, streams, strutils, times, unittest]
 
 const
   ValidWavs = [
@@ -46,6 +46,24 @@ proc runRearchiver(workingDir: string;
   result.output = process.outputStream.readAll()
   result.code = process.waitForExit()
   process.close()
+
+proc runRearchiverTimed(workingDir: string; args: openArray[string];
+                        timeoutMs: int): tuple[code: int, elapsedMs: int] =
+  ## Runs the binary with piped stdio that is never read, keeping expected
+  ## panic output out of the test log. A hung process may fill the pipe and
+  ## block, but `waitForExit` still kills it at the timeout.
+  let started = getMonoTime()
+  let process = startProcess(
+    binaryPath(),
+    workingDir = workingDir,
+    args = args,
+    options = {poUsePath, poStdErrToStdOut})
+  defer:
+    if process.running:
+      process.kill()
+    process.close()
+  result.code = process.waitForExit(timeoutMs)
+  result.elapsedMs = (getMonoTime() - started).inMilliseconds.int
 
 proc newTempDir(label: string): string =
   result = getTempDir() / ("rearchiver-test-" & label & "-" & $getCurrentProcessId())
@@ -123,6 +141,18 @@ suite "rearchiver integration":
     let (_, code) = runRearchiver(
       tempDir, ["-y", "-o", "out.rpp", "test.rpp"])
     check code == 0
+
+  test "SOURCE WAVE without FILE exits instead of looping":
+    let tempDir = newTempDir("no-file")
+    defer: removeDir(tempDir)
+    writeFile(tempDir / "test.rpp",
+      "<REAPER_PROJECT 0.1 \"7.0\" 1\n  <ITEM\n    <SOURCE WAVE\n  >\n>\n")
+
+    const timeoutMs = 1000
+    let (code, elapsedMs) = runRearchiverTimed(
+      tempDir, ["-y", "test.rpp"], timeoutMs)
+    check code == 1
+    check elapsedMs < timeoutMs div 2
 
   test "default output suffix":
     requireTool("flac"):

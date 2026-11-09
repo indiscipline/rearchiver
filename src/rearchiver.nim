@@ -102,15 +102,18 @@ iterator findWaves(src: string): ChunkRec =
       let
         srcEnd = Natural(srcMarker + SourceMarker.len)
         srcLow = Natural(srcEnd - CodecStrs[CWav].mark.len() - 1)
-        fileLow = src.find(FileMarker, srcEnd, src.high) + FileMarker.len
+        fileMarker = src.find(FileMarker, srcEnd, src.high)
+      if fileMarker < 0: panic("Aborted: Invalid project file")
+      let
+        fileLow = fileMarker + FileMarker.len
         fileHi = src.find('"', fileLow, src.high) - 1
-      if fileLow < 0 or fileHi < 0: panic("Aborted: Invalid project file")
+      if fileHi < 0: panic("Aborted: Invalid project file")
       let name = src.substr(fileLow, fileHi)
       fr = ChunkRec(
         pre: Natural(start)..srcLow,
         mid: srcEnd..Natural(fileLow-1),
         name: name)
-      start = fileHi + 1 # safe, otherwise already panicked
+      start = fileHi + 1 # progress guaranteed by the checks above
     else: # tail or the whole file if nothing was found
       fr = ChunkRec(pre: (Natural(start)..Natural(src.high)), name: "")
       start = src.len # break after yield
